@@ -1,0 +1,51 @@
+"""AirWrite configuration — aligned with project documentation."""
+
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent
+
+# Modes
+MODE_CURSOR = "cursor"
+MODE_WRITE = "write"
+
+# Timing (seconds)
+WORD_PAUSE_THRESHOLD = 1.2
+RIGHT_CLICK_HOLD = 1.0
+MODE_SWITCH_HOLD = 0.8
+WIPE_COOLDOWN = 1.5
+
+# Gesture thresholds
+PINCH_THRESHOLD = 0.05
+SCROLL_PINCH_THRESHOLD = 0.06
+OPEN_PALM_FINGER_SPREAD = 0.12
+WIPE_MIN_DISTANCE = 0.25
+WIPE_MIN_VELOCITY = 0.015
+
+# Recognition
+PREDICTION_STABLE_FRAMES = 5
+CNN_INPUT_SIZE = 28
+PAUSE_SEGMENT_MS = 80
+
+# Segmentation heuristics
+VELOCITY_DROP_RATIO = 0.35
+STROKE_GAP_PX = 18
+X_CLUSTER_MIN_GAP = 22
+
+# Cursor
+CURSOR_SMOOTHING = 0.35
+SCREEN_MARGIN = 5
+
+# Camera
+CAMERA_INDEX = 0
+FRAME_WIDTH = 1280
+FRAME_HEIGHT = 720
+
+# Paths
+ML_MODELS_DIR = PROJECT_ROOT / "ml" / "models"
+ML_DATASETS_DIR = PROJECT_ROOT / "ml" / "datasets"
+DEFAULT_MODEL_PATH = ML_MODELS_DIR / "emnist_cnn.pt"
+
+# HUD
+HUD_FONT_SCALE = 0.6
+HUD_COLOR = (0, 255, 180)
+HUD_BG_ALPHA = 0.55
