@@ -72,6 +72,3 @@ AirWrite/
 
 See `Airwrite Master Project Documentation.pdf` for full architecture, requirements, and roadmap.
 
-## License
-
-Academic / FYP project — use per your institution guidelines.
