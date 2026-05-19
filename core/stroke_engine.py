@@ -26,6 +26,8 @@ class StrokeEngine:
     points: list[StrokePoint] = field(default_factory=list)
     pen_down: bool = False
     _canvas: np.ndarray | None = None
+    _frame_w: int = 640
+    _frame_h: int = 480
 
     def reset_buffer(self) -> None:
         self.points.clear()
@@ -36,51 +38,22 @@ class StrokeEngine:
         w, h = self.canvas_size
         self._canvas = np.zeros((h, w), dtype=np.uint8)
 
-    def start_stroke(self, x: int, y: int) -> None:
-        self.pen_down = True
-        self.points.append(StrokePoint(x, y, now_ms()))
-
-    def add_point(self, x: int, y: int) -> None:
-        if not self.pen_down:
-            return
-        self.points.append(StrokePoint(x, y, now_ms()))
-        if self._canvas is None:
-            self._init_canvas()
-        if len(self.points) >= 2:
-            p1 = self.points[-2]
-            p2 = self.points[-1]
-            cv2.line(
-                self._canvas,
-                self._to_canvas(p1.x, p1.y),
-                self._to_canvas(p2.x, p2.y),
-                255,
-                self.stroke_width,
-            )
-
-    def end_stroke(self) -> None:
-        self.pen_down = False
-
-    def _to_canvas(self, x: int, y: int) -> tuple[int, int]:
-        """Map frame coordinates into fixed canvas."""
-        w, h = self.canvas_size
-        # Normalized mapping assumes points already in frame space; scale to canvas
-        cx = int(x * w / max(1, w))
-        cy = int(y * h / max(1, h))
-        return min(w - 1, max(0, cx)), min(h - 1, max(0, cy))
-
     def set_canvas_mapping(self, frame_w: int, frame_h: int) -> None:
         self._frame_w = frame_w
         self._frame_h = frame_h
 
     def map_to_canvas(self, x: int, y: int) -> tuple[int, int]:
+        """Map frame pixel coordinates to canvas coordinates."""
         w, h = self.canvas_size
-        fw = getattr(self, "_frame_w", w)
-        fh = getattr(self, "_frame_h", h)
-        cx = int(x / fw * w)
-        cy = int(y / fh * h)
+        cx = int(x / self._frame_w * w)
+        cy = int(y / self._frame_h * h)
         return min(w - 1, max(0, cx)), min(h - 1, max(0, cy))
 
-    def render_point(self, x: int, y: int) -> None:
+    def add_point_mapped(self, x: int, y: int) -> None:
+        """Add a point (in frame space) and draw onto canvas."""
+        if not self.pen_down:
+            return
+        self.points.append(StrokePoint(x, y, now_ms()))
         if self._canvas is None:
             self._init_canvas()
         cx, cy = self.map_to_canvas(x, y)
@@ -91,41 +64,20 @@ class StrokeEngine:
         else:
             cv2.circle(self._canvas, (cx, cy), self.stroke_width // 2, 255, -1)
 
-    def add_point_mapped(self, x: int, y: int) -> None:
-        if not self.pen_down:
-            return
-        self.points.append(StrokePoint(x, y, now_ms()))
-        self.render_point(x, y)
+    def end_stroke(self) -> None:
+        self.pen_down = False
 
     def get_canvas_image(self) -> np.ndarray:
         if self._canvas is None:
             self._init_canvas()
         return self._canvas.copy()
 
-    def get_bounding_regions(self) -> list[tuple[int, int, int, int]]:
-        """Return list of (x1,y1,x2,y2) in canvas space for each stroke segment."""
-        if not self.points:
-            return []
-        coords = [self.map_to_canvas(p.x, p.y) for p in self.points]
-        xs = [c[0] for c in coords]
-        ys = [c[1] for c in coords]
-        pad = 8
-        w, h = self.canvas_size
-        return [
-            (
-                max(0, min(xs) - pad),
-                max(0, min(ys) - pad),
-                min(w, max(xs) + pad),
-                min(h, max(ys) + pad),
-            )
-        ]
-
     def render_overlay(self, frame: np.ndarray, x: int, y: int) -> None:
-        """Draw live fingertip trail on webcam frame."""
+        """Draw live fingertip dot and trail on webcam frame."""
         color = (0, 255, 255) if self.pen_down else (100, 100, 100)
         cv2.circle(frame, (x, y), 8, color, 2)
         if len(self.points) >= 2:
-            for i in range(1, len(self.points)):
+            for i in range(1, min(len(self.points), 30)):  # last 30 points only
                 p0 = (self.points[i - 1].x, self.points[i - 1].y)
                 p1 = (self.points[i].x, self.points[i].y)
                 cv2.line(frame, p0, p1, (255, 200, 0), 3)
@@ -140,4 +92,4 @@ class StrokeEngine:
         h, w = preview.shape[:2]
         fh, fw = frame.shape[:2]
         if oy + h < fh and ox + w < fw:
-            frame[oy : oy + h, ox : ox + w] = preview
+            frame[oy: oy + h, ox: ox + w] = preview

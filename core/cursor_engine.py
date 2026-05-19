@@ -5,7 +5,6 @@ from __future__ import annotations
 import pyautogui
 
 import config
-from utils.helpers import mirror_x
 from utils.smoothing import ExponentialSmoother
 
 pyautogui.FAILSAFE = True
@@ -13,7 +12,11 @@ pyautogui.PAUSE = 0
 
 
 class CursorEngine:
-    """Map hand landmarks to screen cursor with smoothing."""
+    """Map hand landmarks to screen cursor with smoothing.
+
+    NOTE: expects coordinates already in display space (frame already
+    flipped with cv2.flip in the main loop). No mirroring is done here.
+    """
 
     def __init__(self):
         self.smoother = ExponentialSmoother(alpha=config.CURSOR_SMOOTHING)
@@ -22,8 +25,8 @@ class CursorEngine:
         self._clicked_this_pinch = False
 
     def move(self, x: int, y: int, frame_w: int, frame_h: int) -> None:
-        mx = mirror_x(x, frame_w)
-        sx = int(mx / frame_w * self.screen_w)
+        """Move cursor. x/y are already in display space (no mirroring)."""
+        sx = int(x / frame_w * self.screen_w)
         sy = int(y / frame_h * self.screen_h)
         sx = max(config.SCREEN_MARGIN, min(self.screen_w - config.SCREEN_MARGIN, sx))
         sy = max(config.SCREEN_MARGIN, min(self.screen_h - config.SCREEN_MARGIN, sy))
