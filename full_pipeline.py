@@ -222,8 +222,9 @@ class AirWriteApp:
                 if wipe_fired:
                     self._handle_wipe()
 
-                # Mode switch only if wipe is NOT accumulating distance
-                if not wipe_fired and not self.gestures._wipe_distance > 0.05:
+                # Mode switch: allow unless a wipe fired this frame OR hand is
+                # actively swiping fast (per-frame velocity, not cumulative drift).
+                if not wipe_fired and self.gestures._last_wipe_dx < config.WIPE_MIN_VELOCITY:
                     if self.gestures.update_mode_switch(gesture):
                         self.strokes.reset_buffer()
                         self.stabilizer.reset()

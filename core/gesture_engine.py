@@ -88,6 +88,7 @@ class GestureEngine:
         self._wipe_cooldown_until = 0.0
         self._wipe_prev_x: float | None = None
         self._wipe_distance = 0.0
+        self._last_wipe_dx: float = 0.0  # per-frame velocity for this frame only
 
     def detect_primary(self, hand: HandState) -> GestureType:
         if hand.is_open_palm():
@@ -136,6 +137,7 @@ class GestureEngine:
     def detect_wipe(self, hand: HandState) -> bool:
         """Horizontal full-hand swipe for delete/clear."""
         now = time.time()
+        self._last_wipe_dx = 0.0  # reset every frame
         if now < self._wipe_cooldown_until:
             return False
         if not hand.is_open_palm():
@@ -147,6 +149,7 @@ class GestureEngine:
         nx = cx / hand.frame_w
         if self._wipe_prev_x is not None:
             dx = abs(nx - self._wipe_prev_x)
+            self._last_wipe_dx = dx  # per-frame velocity, not cumulative
             self._wipe_distance += dx
             velocity = dx
             if (
