@@ -44,6 +44,7 @@ class AirWriteApp:
         self._running = True
         self._backspace_pressed = False
         self._wipe_active = False  # tracks if wipe is in progress, suppresses mode switch
+        self._mode_switched_at: float = 0.0  # timestamp of last mode switch for banner
 
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
@@ -63,6 +64,17 @@ class AirWriteApp:
                 self._running = False
             elif key == keyboard.Key.backspace:
                 self._backspace_pressed = True
+            elif key == keyboard.Key.tab:
+                # Instant mode toggle — reliable alternative to open-palm gesture
+                self.gestures.mode = (
+                    config.MODE_WRITE
+                    if self.gestures.mode == config.MODE_CURSOR
+                    else config.MODE_CURSOR
+                )
+                self.strokes.reset_buffer()
+                self.stabilizer.reset()
+                self._raw_prediction = ""
+                self._mode_switched_at = time.time()
             elif hasattr(key, "char") and key.char in ("q", "Q"):
                 self._running = False
         except AttributeError:
@@ -229,6 +241,7 @@ class AirWriteApp:
                         self.strokes.reset_buffer()
                         self.stabilizer.reset()
                         self._raw_prediction = ""
+                        self._mode_switched_at = time.time()
 
                 # Draw landmarks
                 mp.solutions.drawing_utils.draw_landmarks(
@@ -254,6 +267,7 @@ class AirWriteApp:
                 stable_prediction=self.stabilizer.stable,
                 pen_down=self.strokes.pen_down,
                 gesture_label=self.gestures.gesture_label(gesture) if hand_state else "",
+                mode_switched_at=self._mode_switched_at,
             )
 
             if self.gestures.mode == config.MODE_WRITE:
