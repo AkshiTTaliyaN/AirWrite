@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import cv2
 import numpy as np
 
@@ -14,11 +16,9 @@ class HUD:
     def __init__(self):
         self.fps = 0.0
         self._frame_count = 0
-        self._fps_timer = 0.0
+        self._fps_timer = time.time()  # initialise to now, not epoch zero
 
     def tick_fps(self) -> None:
-        import time
-
         self._frame_count += 1
         elapsed = time.time() - self._fps_timer
         if elapsed >= 1.0:

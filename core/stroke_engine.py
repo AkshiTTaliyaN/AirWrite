@@ -77,7 +77,8 @@ class StrokeEngine:
         color = (0, 255, 255) if self.pen_down else (100, 100, 100)
         cv2.circle(frame, (x, y), 8, color, 2)
         if len(self.points) >= 2:
-            for i in range(1, min(len(self.points), 30)):  # last 30 points only
+            start = max(1, len(self.points) - 29)  # last 30 points only
+            for i in range(start, len(self.points)):
                 p0 = (self.points[i - 1].x, self.points[i - 1].y)
                 p1 = (self.points[i].x, self.points[i].y)
                 cv2.line(frame, p0, p1, (255, 200, 0), 3)

@@ -22,7 +22,7 @@ WIPE_MIN_DISTANCE = 0.25
 WIPE_MIN_VELOCITY = 0.015
 
 # Recognition
-PREDICTION_STABLE_FRAMES = 5
+PREDICTION_STABLE_FRAMES = 1  # recognition runs once per pen-up, so 1 is correct
 CNN_INPUT_SIZE = 28
 PAUSE_SEGMENT_MS = 80
 

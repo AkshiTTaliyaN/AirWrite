@@ -16,7 +16,6 @@ import numpy as np
 import pyautogui
 from pynput import keyboard
 
-# Ensure project root on path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import config
@@ -25,7 +24,6 @@ from core.gesture_engine import GestureEngine, GestureType, HandState
 from core.segmentation_engine import SegmentationEngine
 from core.stroke_engine import StrokeEngine
 from ml.inference.predictor import CharacterPredictor
-from utils.helpers import mirror_x
 from utils.hud import HUD
 from utils.smoothing import PredictionStabilizer
 
@@ -40,11 +38,12 @@ class AirWriteApp:
         self.stabilizer = PredictionStabilizer(config.PREDICTION_STABLE_FRAMES)
         self.hud = HUD()
 
-        self._last_activity = time.time()
+        self._last_pen_up_time: float = 0.0
         self._last_committed_word = ""
         self._raw_prediction = ""
         self._running = True
         self._backspace_pressed = False
+        self._wipe_active = False  # tracks if wipe is in progress, suppresses mode switch
 
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
@@ -56,12 +55,16 @@ class AirWriteApp:
 
         pyautogui.FAILSAFE = True
 
+    # ── Keyboard listener ─────────────────────────────────────────────────────
+
     def _on_key(self, key) -> None:
         try:
-            if key == keyboard.Key.esc or (hasattr(key, "char") and key.char in ("q", "Q")):
+            if key == keyboard.Key.esc:
                 self._running = False
-            if hasattr(key, "char") and key.char == "\x08":
+            elif key == keyboard.Key.backspace:
                 self._backspace_pressed = True
+            elif hasattr(key, "char") and key.char in ("q", "Q"):
+                self._running = False
         except AttributeError:
             pass
 
@@ -70,22 +73,28 @@ class AirWriteApp:
         listener.daemon = True
         listener.start()
 
+    # ── Recognition ───────────────────────────────────────────────────────────
+
     def _update_recognition(self) -> None:
+        """Run segmentation + CNN on current stroke buffer. Call on pen-up only."""
+        if not self.strokes.points:
+            return
         canvas = self.strokes.get_canvas_image()
         segments = self.segmentation.segment(self.strokes.points, self.strokes.pen_down)
         crops = [self.segmentation.crop_character(canvas, seg) for seg in segments]
         self._raw_prediction = self.predictor.predict_word(crops)
         self.stabilizer.update(self._raw_prediction)
 
+    # ── Word lifecycle ────────────────────────────────────────────────────────
+
     def _commit_word(self) -> None:
         word = self.stabilizer.stable or self._raw_prediction
         if word and word != "?":
-            pyautogui.write(word, interval=0.02)
+            pyautogui.write(word + " ", interval=0.02)
             self._last_committed_word = word
         self.strokes.reset_buffer()
         self.stabilizer.reset()
         self._raw_prediction = ""
-        self._last_activity = time.time()
 
     def _clear_current_word(self) -> None:
         self.strokes.reset_buffer()
@@ -94,30 +103,38 @@ class AirWriteApp:
 
     def _delete_previous_word(self) -> None:
         if self._last_committed_word:
-            for _ in range(len(self._last_committed_word)):
+            # Delete word + the trailing space we injected
+            for _ in range(len(self._last_committed_word) + 1):
                 pyautogui.press("backspace")
             self._last_committed_word = ""
 
-    def _handle_wipe(self, committed: bool) -> None:
-        if committed:
-            self._delete_previous_word()
-        else:
-            self._clear_current_word()
-
     def _check_word_pause(self) -> None:
-        if self.strokes.pen_down:
+        """Commit word if pen has been up long enough."""
+        if self.strokes.pen_down or not self.strokes.points:
             return
-        if not self.strokes.points:
-            return
-        if time.time() - self._last_activity >= config.WORD_PAUSE_THRESHOLD:
+        if time.time() - self._last_pen_up_time >= config.WORD_PAUSE_THRESHOLD:
             self._commit_word()
 
+    # ── Wipe gesture ──────────────────────────────────────────────────────────
+
+    def _handle_wipe(self) -> None:
+        """
+        Wipe before word commit → clear current buffer.
+        Wipe after word commit  → delete previously injected word.
+        """
+        if self.strokes.points:
+            self._clear_current_word()
+        elif self._last_committed_word:
+            self._delete_previous_word()
+
+    # ── Mode handlers ─────────────────────────────────────────────────────────
+
     def _process_cursor_mode(self, hand: HandState, gesture: GestureType) -> None:
+        # Frame is already cv2.flip()'d — use raw landmark pixel directly.
         x, y = hand.index_tip_pixel()
-        mx = mirror_x(x, hand.frame_w)
 
         if gesture == GestureType.INDEX_EXTENDED:
-            self.cursor.move(mx, y, hand.frame_w, hand.frame_h)
+            self.cursor.move(x, y, hand.frame_w, hand.frame_h)
 
         if gesture == GestureType.TWO_FINGER_PINCH:
             self.cursor.handle_scroll_drag(y, active=True)
@@ -130,7 +147,6 @@ class AirWriteApp:
             self.cursor.reset_pinch_click()
         elif gesture == GestureType.PINCH and self.cursor.can_click():
             self.cursor.left_click()
-            self.cursor.reset_pinch_click()
 
         if gesture != GestureType.PINCH:
             self.cursor.reset_pinch_click()
@@ -138,21 +154,17 @@ class AirWriteApp:
 
     def _process_write_mode(self, hand: HandState, gesture: GestureType) -> None:
         x, y = hand.index_tip_pixel()
-        mx = mirror_x(x, hand.frame_w)
 
         if gesture == GestureType.PINCH:
             if not self.strokes.pen_down:
                 self.strokes.set_canvas_mapping(hand.frame_w, hand.frame_h)
                 self.strokes.pen_down = True
-                self.strokes.add_point_mapped(mx, y)
-            else:
-                self.strokes.add_point_mapped(mx, y)
-            self._last_activity = time.time()
-        elif self.strokes.pen_down:
-            self.strokes.end_stroke()
-            self._last_activity = time.time()
+            self.strokes.add_point_mapped(x, y)
 
-        if self.strokes.points:
+        elif self.strokes.pen_down:
+            # Pen just lifted — run recognition once here, not every frame
+            self.strokes.end_stroke()
+            self._last_pen_up_time = time.time()
             self._update_recognition()
 
         self._check_word_pause()
@@ -160,6 +172,8 @@ class AirWriteApp:
         if self._backspace_pressed:
             pyautogui.press("backspace")
             self._backspace_pressed = False
+
+    # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self) -> None:
         self._start_keyboard_listener()
@@ -174,20 +188,24 @@ class AirWriteApp:
 
         if not self.predictor.is_ready:
             print(
-                "Warning: No trained model found at",
-                config.DEFAULT_MODEL_PATH,
-                "\nTrain with: python -m ml.training.train_cnn --epochs 5",
+                f"Warning: No trained model found at {config.DEFAULT_MODEL_PATH}\n"
+                "Train first: python -m ml.training.train_cnn --epochs 5\n"
+                "Cursor mode will still work."
             )
 
-        print("AirWrite started. Open palm hold to switch mode. Press Q or Esc to quit.")
+        print("AirWrite started.")
+        print("  Open palm hold (~0.8s) → switch mode")
+        print("  Q / Esc                → quit")
 
         while self._running:
             ok, frame = cap.read()
             if not ok:
                 break
 
+            # Single flip here — everything downstream uses these coordinates
             frame = cv2.flip(frame, 1)
             h, w = frame.shape[:2]
+
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = self.hands.process(rgb)
 
@@ -199,14 +217,19 @@ class AirWriteApp:
                 hand_state = HandState(lm.landmark, w, h)
                 gesture = self.gestures.detect_primary(hand_state)
 
-                if self.gestures.detect_wipe(hand_state):
-                    committed = not self.strokes.points and bool(self._last_committed_word)
-                    self._handle_wipe(committed=committed)
+                # Wipe detection — if active, skip mode switch this frame
+                wipe_fired = self.gestures.detect_wipe(hand_state)
+                if wipe_fired:
+                    self._handle_wipe()
 
-                if self.gestures.update_mode_switch(gesture):
-                    self.strokes.reset_buffer()
-                    self.stabilizer.reset()
+                # Mode switch only if wipe is NOT accumulating distance
+                if not wipe_fired and not self.gestures._wipe_distance > 0.05:
+                    if self.gestures.update_mode_switch(gesture):
+                        self.strokes.reset_buffer()
+                        self.stabilizer.reset()
+                        self._raw_prediction = ""
 
+                # Draw landmarks
                 mp.solutions.drawing_utils.draw_landmarks(
                     frame,
                     lm,
@@ -219,10 +242,8 @@ class AirWriteApp:
                     self._process_cursor_mode(hand_state, gesture)
                 else:
                     self._process_write_mode(hand_state, gesture)
-                    if hand_state:
-                        x, y = hand_state.index_tip_pixel()
-                        mx = mirror_x(x, w)
-                        self.strokes.render_overlay(frame, mx, y)
+                    x, y = hand_state.index_tip_pixel()
+                    self.strokes.render_overlay(frame, x, y)
 
             self.hud.tick_fps()
             self.hud.draw(
@@ -233,6 +254,7 @@ class AirWriteApp:
                 pen_down=self.strokes.pen_down,
                 gesture_label=self.gestures.gesture_label(gesture) if hand_state else "",
             )
+
             if self.gestures.mode == config.MODE_WRITE:
                 self.strokes.render_canvas_preview(frame)
 

@@ -6,6 +6,7 @@ venv/
 ml/datasets/
 *.pt
 *.pth
+*.ckpt
 .idea/
 .vscode/
 *.log
